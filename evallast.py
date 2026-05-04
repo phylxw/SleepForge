@@ -345,7 +345,7 @@ def evallast(cfg: DictConfig):
                 item.score = scores_list[i]
         else:
             
-            acc_rag,_ = evaluate_results(rag_results, f"SleepRAG ({corpus_tag} Optimized Memory)", result_log_file)
+            acc_rag,_ = evaluate_results(rag_results, f"SleepForge ({corpus_tag} Optimized Memory)", result_log_file)
         
         
         
@@ -358,7 +358,7 @@ def evallast(cfg: DictConfig):
             f"dataset: {cfg.experiment.test_dataset_name}\n"
             f"model: {model_source}\n"
             f"Baseline: {acc_baseline:.2f}%\n"
-            f"SleepRAG: {acc_rag:.2f}%\n"
+            f"SleepForge: {acc_rag:.2f}%\n"
             f"gain: {acc_rag - acc_baseline:+.2f}%\n"
             f"{'='*50}\n"
         )
