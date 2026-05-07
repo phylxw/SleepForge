@@ -20,275 +20,220 @@ prune:
   max_prune_per_cluster: 3
 prompts:
 
-    # =================================================================
-    # Low Score Memory Expert (Diagnosis)
-    # =================================================================
-    low_grad_expert: |
-      <|im_start|>system
-      You are a TextGrad-style memory optimizer for memories of a Retrieval-Augmented Generation (RAG) system. Analyze why the [Target Memory] failed to support the [Failed Queries].
+  low_grad_expert: |
+    <|im_start|>system
+    [Role]
+    You are an expert memory diagnostician for a frozen-LLM memory harness.
+    Your task is to analyze why the Target Memory failed to help the model on the Failed Queries.
 
-      [GOAL]
-      Select ONE action and provide optimized guidance as a text gradient.
-      Focus on reusable reasoning procedures, missing assumptions, applicability conditions, and failure boundaries.
-      Do not overfit to the specific failed questions or copy their answers.
-      The action and gradient you generate will be provided to a student model, allowing it to improve the memory according to your guidance.
+    [Goal]
+    Identify whether the memory should be repaired or replaced.
+    Focus on reusable reasoning procedures, applicability conditions, and failure boundaries.
+    Do not copy the answers to the failed queries.
 
-      [Target Memory]
-      {content}
+    [Actions]
+    1. Repair: The memory contains useful partial logic but is misleading, incomplete, or too narrow. Rewrite it into a safer and more general skill.
+    2. Replace: The memory is irrelevant, harmful, or answer-specific. Discard it and create a new skill memory from the failure cases.
 
-      [Failed Queries]
-      {neg_queries}
+    [Input]
+    Target Memory: {content}
+    Failed Queries: {neg_queries}
 
-      [ACTION RULES]
-      Choose ONE action based on the gap analysis:
-      1. EXPAND: The memory is partially useful but too narrow. Keep its useful core and organize new problem-solving methods from the failed queries into an additional or expanded skill memory.
-      2. REPLACE: The memory is misleading, outdated, hallucinated, or useless. Discard the old logic and create a cleaner reusable skill memory from the failure evidence.
+    [Output Format]
+    Action: \box{{Repair|Replace}}
+    Diagnosis: \diagnosis{{Why the memory failed.}}
+    Guidance: \guidance{{Actionable instructions for a reusable skill memory. Max 150 words.}}
+    <|im_end|>
+    <|im_start|>user
+    Start your diagnosis now.
+    <|im_end|>
+    <|im_start|>assistant
 
-      [OUTPUT INSTRUCTION]
-      If the action is EXPAND, the advice should first identify what useful logic should be preserved, then clearly state what new procedure, applicability condition, or failure boundary should be added.
-      If the action is REPLACE, the advice should specify concrete requirements for generating a new reusable skill memory.
+  repair_prompt: |
+    <|im_start|>system
+    [Role]
+    You are editing an external memory for a frozen LLM.
+    Your goal is to convert a flawed memory into a reusable skill memory.
 
-      [OUTPUT FORMAT STRICT]
-      Action: \box{{EXPAND|REPLACE}}
-      Advice: \advice{{<Actionable instructions. MUST include: (i) abstract procedure or logic chain; (ii) when the memory applies; (iii) what shortcut or failure boundary should be avoided. Keep it concise.>}}
-      <|im_end|>
-      <|im_start|>user
-      Start your analysis now. You can think step by step and give the final info at last.
-      <|im_end|>
-      <|im_start|>assistant
+    [Input]
+    Original Memory: {content}
+    Expert Guidance: {guidance}
 
+    [Requirements]
+    - Do not copy any original question or final answer.
+    - Preserve only reusable reasoning logic.
+    - Include three parts: Procedure, When to Use, and Failure Boundary.
+    - Avoid unsupported facts, hardcoded constants, or dataset-specific shortcuts.
+    - Length constraint: <= 200 tokens.
 
-    # =================================================================
-    # Application: REFINE / EXPAND (Update existing memory)
-    # =================================================================
-    appgrad_low_refine: |
-      <|im_start|>system
-      You are responsible for memory optimization in a frozen-LLM external memory system.
-      Rewrite or expand the memory entry to improve reasoning ability and generalization capability for problem-solving.
+    [Output Format]
+    \memory$
+    [Procedure]: ...
+    [When to Use]: ...
+    [Failure Boundary]: ...
+    \endmemory$
+    <|im_end|>
+    <|im_start|>user
+    Repair the memory now.
+    <|im_end|>
+    <|im_start|>assistant
 
-      [INPUTS]
-      {content}
+  replace_prompt: |
+    <|im_start|>system
+    [Role]
+    You are creating a new skill memory from failure cases.
 
-      [ADVICE]
-      {gradient}
+    [Input]
+    Failed Queries: {neg_queries}
+    Expert Guidance: {guidance}
 
-      [FORMAT STRICT]
-      Output the memory you finally summarized in the wrapper:
-      \memory$ <New detailed memory content> \endmemory$
+    [Requirements]
+    - Do not write the original questions or answers into the memory.
+    - Extract the transferable reasoning procedure behind the failures.
+    - Include three parts: Procedure, When to Use, and Failure Boundary.
+    - Avoid meta commentary such as "this memory improves performance."
+    - Length constraint: <= 200 tokens.
 
-      [INSTRUCTIONS]
-      Summarize reusable problem-solving logic from the evidence and expert advice.
-      The memory should behave like a compact skill memory: it should contain a reusable procedure, when it applies, and what shortcut or boundary should be avoided.
-      Do not write the original questions and answers into the memory.
-      Do not copy dataset-specific artifacts or answer strings.
-      The memory should be concise, self-contained, and directly useful during retrieval.
-      You may conduct in-depth thinking first before presenting the final memory.
+    [Output Format]
+    \memory$
+    [Procedure]: ...
+    [When to Use]: ...
+    [Failure Boundary]: ...
+    \endmemory$
+    <|im_end|>
+    <|im_start|>user
+    Create the replacement skill memory now.
+    <|im_end|>
+    <|im_start|>assistant
 
-      Constraints: <= 100 tokens. No meta talk (no “this memory improves…”, no “framework/skills/generalization”).
-      <|im_end|>
-      <|im_start|>user
-      Refine the memory now. You can think step by step and give the memory at last.
-      <|im_end|>
-      <|im_start|>assistant
+  high_utility_refinement: |
+    <|im_start|>system
+    [Role]
+    You are an expert memory diagnostician for a high-utility memory.
+    The memory has helped in previous queries, but failed on the cases below.
 
+    [Goal]
+    Determine whether the failure indicates noise, a missing boundary condition, or a distinct sub-skill.
 
-    # =================================================================
-    # Application: REPLACE (New memory from scratch)
-    # =================================================================
-    appgrad_low_replace: |
-      <|im_start|>system
-      You are responsible for memory optimization in a frozen-LLM external memory system.
-      Create a BRAND NEW memory entry to replace a misleading or useless memory.
+    [Actions]
+    1. Ignore: The failure is unrelated or caused by noise; do not edit the memory.
+    2. Refine: Add missing conditions, exceptions, or failure boundaries to the existing skill.
+    3. Split: Create a separate skill memory for a distinct sub-domain, without diluting the original memory.
 
-      [INPUTS]
-      {neg_queries}
+    [Input]
+    High-Utility Memory: {content}
+    Failed Queries: {neg_queries}
 
-      [ADVICE]
-      {gradient}
+    [Output Format]
+    Reasoning: <1--3 sentences on the gap.>
+    Command: \box{{Ignore|Refine|Split}}
+    Guidance: \guidance{{Specific instructions for the edit.}}
+    <|im_end|>
+    <|im_start|>user
+    Analyze the failure now.
+    <|im_end|>
+    <|im_start|>assistant
 
-      [FORMAT STRICT]
-      Output the memory you finally summarized in the wrapper:
-      \memory$ <New detailed memory content> \endmemory$
+  refine_prompt: |
+    <|im_start|>system
+    [Goal]
+    Refine an existing skill memory by adding missing applicability conditions, edge cases, or failure boundaries.
 
-      [INSTRUCTIONS]
-      Summarize reusable reasoning logic and problem-solving methods from the failed queries and expert advice.
-      The new memory should capture a transferable procedure, not a dataset-specific answer.
-      Include when the procedure should be used and what shortcut or boundary should be avoided.
-      Do not write the original questions and answers into the memory.
-      Do not copy answer strings or problem-specific constants unless they define a general rule.
-      If you deem that the model inherently possesses the knowledge contained in this memory, make it as concise as possible.
-      You may conduct in-depth thinking first before presenting the final memory.
+    [Input]
+    Existing Memory: {original_content}
+    Expert Guidance: {guidance}
 
-      Constraints: <= 100 tokens. No meta talk (no “this memory improves…”, no “framework/skills/generalization”).
-      <|im_end|>
-      <|im_start|>user
-      Create the new memory. You can think step by step and give the memory at last.
-      <|im_end|>
-      <|im_start|>assistant
+    [Requirements]
+    - Preserve the useful core procedure.
+    - Add only generalizable conditions or boundaries.
+    - Do not append answer-specific patches.
+    - Length constraint: <= 200 tokens.
 
+    [Output Format]
+    \memory$
+    [Procedure]: ...
+    [When to Use]: ...
+    [Failure Boundary]: ...
+    \endmemory$
+    <|im_end|>
+    <|im_start|>user
+    Refine the memory now.
+    <|im_end|>
+    <|im_start|>assistant
 
-    # =================================================================
-    # High Score Memory Expert (Diagnosis)
-    # =================================================================
-    high_grad_expert: |
-      <|im_start|>system
-      You are a senior cognitive architect optimizing a high-utility "Champion" memory.
-      The memory is useful in many cases, but it failed on some related queries.
+  split_prompt: |
+    <|im_start|>system
+    [Goal]
+    Create a standalone skill memory for a distinct sub-domain or reasoning primitive revealed by the failed queries.
 
-      [INPUT DATA]
-      <champion_memory>
-      {content}
-      </champion_memory>
+    [Input]
+    Failed Queries: {neg_queries}
+    Expert Guidance: {guidance}
 
-      <failed_queries>
-      {neg_queries}
-      </failed_queries>
+    [Requirements]
+    - Do not modify or dilute the original high-utility memory.
+    - Extract a new reusable skill with clear applicability.
+    - Include a failure boundary to prevent overuse.
+    - Length constraint: <= 200 tokens.
 
-      [TASK]
-      Analyze why this strong memory failed and determine the strategy:
+    [Output Format]
+    \memory$
+    [Procedure]: ...
+    [When to Use]: ...
+    [Failure Boundary]: ...
+    \endmemory$
+    <|im_end|>
+    <|im_start|>user
+    Create the split skill memory now.
+    <|im_end|>
+    <|im_start|>assistant
 
-      1. IGNORE: The failure is noisy, irrelevant, or not caused by this memory.
-      2. SUPPLEMENT: The memory is broadly correct but needs an exception, missing condition, additional step, or failure boundary.
-      3. SPLIT: The failed queries represent a distinct sub-domain requiring a standalone specialized skill memory.
+  skill_memory_audit: |
+    <|im_start|>system
+    [Role]
+    You are an independent auditor for a frozen-LLM memory harness.
+    Your goal is to reject unsafe or overfitted candidate memories.
 
-      [DECISION PRINCIPLES]
-      Preserve useful existing logic when possible.
-      Avoid diluting a strong memory with unrelated rules.
-      Prefer SPLIT when the missing logic is a distinct reusable procedure.
-      Prefer SUPPLEMENT when the missing logic is a boundary condition, nuance, or missing step of the same procedure.
+    [Input]
+    Failed Queries: {failed}
+    Parent Memory: {old}
+    Candidate Memory: {new}
 
-      [OUTPUT FORMAT STRICT]
-      Reasoning: <1-3 sentences on the logical gap>
-      Command: \box{{IGNORE|SUPPLEMENT|SPLIT}} \gradient{{<Specific instructions for the update. Mention the reusable procedure, when to use it, and the failure boundary if applicable.>}}
-      <|im_end|>
-      <|im_start|>user
-      Analyze the failure. You can think step by step and give the final info at last.
-      <|im_end|>
-      <|im_start|>assistant
-      Let's think step by step.
+    [Audit Criteria]
+    1. Grounding: Is the candidate supported by the parent memory or observed failures?
+    2. Generalization: Does it describe a reusable procedure rather than a specific answer?
+    3. Applicability: Does it state when the skill should be used?
+    4. Failure Boundary: Does it warn against common misuse or over-application?
+    5. Safety: Does it avoid hallucinated APIs, unsupported facts, or hardcoded shortcuts?
 
+    [Output Format]
+    Verdict: PASS | FAIL
+    Feedback: <If FAIL, explain the specific issue. If PASS, write "OK".>
+    <|im_end|>
+    <|im_start|>user
+    Audit the candidate memory now.
+    <|im_end|>
+    <|im_start|>assistant
 
-    # =================================================================
-    # Application: SUPPLEMENT (Add edge case logic)
-    # =================================================================
-    appgrad_high_supplement: |
-      <|im_start|>system
-      You are responsible for memory optimization in a frozen-LLM external memory system.
+  rollback_retry: |
+    <|im_start|>system
+    [Input]
+    Rejected Candidate: {bad}
+    Auditor Feedback: {feedback}
 
-      [GOAL]
-      Create a unified memory by appending missing logic, edge-case handling, applicability conditions, or failure boundaries to the existing memory.
+    [Instruction]
+    Rewrite the memory according to the auditor feedback.
+    Optimize for generality, grounding, and clear failure boundaries.
+    Do not copy answers or introduce unsupported facts.
 
-      [INPUTS]
-      <existing_memory>
-      {original_content}
-      </existing_memory>
-
-      <expert_advice>
-      {advice}
-      </expert_advice>
-
-      [INSTRUCTIONS]
-      Preserve the useful core of the existing memory.
-      Add only the missing logic needed for generalization.
-      Include applicability conditions or failure boundaries when relevant.
-      Do not append unrelated rules.
-      Do not copy failed queries or answer strings.
-      The final memory should be concise, self-contained, and directly useful during retrieval.
-
-      Constraints: <= 100 tokens. No meta talk (no “this memory improves…”, no “framework/skills/generalization”).
-
-      [FORMAT STRICT]
-      Output the memory you finally summarized in the wrapper:
-      \memory$ <New detailed memory content> \endmemory$
-      <|im_end|>
-      <|im_start|>user
-      Merge the memory. You can think step by step and give the memory at last.
-      <|im_end|>
-      <|im_start|>assistant
-
-
-    # =================================================================
-    # Application: SPLIT (Create specialized memory)
-    # =================================================================
-    appgrad_high_split: |
-      <|im_start|>system
-      You are responsible for memory optimization in a frozen-LLM external memory system.
-
-      [GOAL]
-      Create a standalone specialized skill memory for a distinct sub-domain or method referenced by the missed queries.
-      There are gaps in the existing champion memory, so the new memory should summarize a separate reusable procedure rather than modifying the original memory.
-
-      [INPUTS]
-      <missed_queries>
-      {neg_text}
-      </missed_queries>
-
-      <expert_advice>
-      {advice}
-      </expert_advice>
-
-      [INSTRUCTIONS]
-      Create a new memory focused on the distinct reusable procedure.
-      Include when the procedure applies and what shortcut or boundary should be avoided.
-      Do not copy failed queries or answers.
-      Do not rewrite the original champion memory.
-      The final memory should be concise, self-contained, and directly useful during retrieval.
-
-      Constraints: <= 100 tokens. No meta talk (no “this memory improves…”, no “framework/skills/generalization”).
-
-      [FORMAT STRICT]
-      Output the memory you finally summarized in the wrapper:
-      \memory$ <New detailed memory content> \endmemory$
-      <|im_end|>
-      <|im_start|>user
-      Create a specialized memory. You can think step by step and give the memory at last.
-      <|im_end|>
-      <|im_start|>assistant
-
-
-    # =================================================================
-    # Expert Judge / Adversarial Auditor
-    # =================================================================
-    expert_judge: |
-      You are a cognitive logic auditor for a RAG memory system.
-      Your goal is to reject candidate memories that are mere fact patches, hallucinated shortcuts, or answer-specific memorization, and accept memories that provide reusable reasoning frameworks.
-
-      [Failed Queries]
-      {failed}
-
-      [Parent Memory]
-      {old}
-
-      [Candidate New Memory]
-      {new}
-
-      [Audit Criteria]
-      1. Groundedness: Is the candidate supported by the parent memory, failed queries, or expert feedback? Reject unsupported facts or hallucinated claims.
-      2. Methodology over Answer: Does the candidate explain the how and why, including logic, steps, or principles, rather than just giving the answer?
-      3. Generalization: Is the logic abstract enough to handle similar future problems, not just the specific failed queries?
-      4. Applicability Boundary: Does the candidate make clear when the procedure should be used, or what shortcut/failure mode should be avoided?
-      5. Atomic & Clear: Is it a single, focused, self-contained concept rather than a mixture of unrelated rules?
-      6. Safety: No hallucinations, unsure facts, misleading claims, or overconfident unsupported statements.
-
-      [Output Format - STRICT]
-      Verdict: PASS|FAIL
-      Feedback: <If FAIL, explain specifically which logic is missing, unsafe, hallucinated, or too specific to the query. If PASS, write "OK".>
-
-
-    # =================================================================
-    # Retry Prompt after Audit Failure
-    # =================================================================
-    retry_prompt: |
-      {ori}
-
-      [Previous Attempt]
-      {bad}
-
-      [Failed Queries]
-      {failed}
-
-      [Critique]
-      {feedback}
-
-      Instruction: Based on the critique, rewrite the memory. Optimize for generalization, groundedness, clear applicability, and failure-boundary awareness. Do not copy answers or dataset-specific artifacts.
-      Output ONLY the memory content wrapped in \memory$ <New detailed memory content> \endmemory$.
+    [Output Format]
+    \memory$
+    [Procedure]: ...
+    [When to Use]: ...
+    [Failure Boundary]: ...
+    \endmemory$
+    <|im_end|>
+    <|im_start|>user
+    Rewrite the rejected candidate now.
+    <|im_end|>
+    <|im_start|>assistant
